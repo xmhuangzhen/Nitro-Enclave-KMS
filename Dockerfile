@@ -1,5 +1,8 @@
+# // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# // SPDX-License-Identifier: MIT-0
 
-FROM amazonlinux as builder
+## build kms-enclave-cli from this docker file https://github.com/aws/aws-nitro-enclaves-sdk-c/blob/main/containers/Dockerfile.al2
+FROM public.ecr.aws/amazonlinux/amazonlinux:2 as builder
 
 RUN yum upgrade -y
 RUN amazon-linux-extras enable epel
@@ -10,15 +13,18 @@ RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-too
 RUN yum install -y gcc-c++
 RUN yum install -y go
 RUN yum install -y ninja-build
+RUN yum install -y quilt
 
 # We keep the build artifacts in the -build directory
 WORKDIR /tmp/crt-builder
 
-RUN git clone -b v1.0.2 https://github.com/awslabs/aws-lc.git aws-lc #
+RUN git clone --depth 1 -b v0.2.0  https://github.com/aws/aws-nitro-enclaves-sdk-c
+
+RUN git clone -b v0.0.2 https://github.com/awslabs/aws-lc.git aws-lc #
 RUN cmake3 -DCMAKE_PREFIX_PATH=/usr -DCMAKE_INSTALL_PREFIX=/usr -GNinja -S aws-lc -B aws-lc/build .
 RUN cmake3 --build aws-lc/build --target install
 
-RUN git clone -b v1.3.9 https://github.com/aws/s2n-tls.git
+RUN git clone -b v1.1.1 https://github.com/aws/s2n-tls.git
 RUN cmake3 -DCMAKE_PREFIX_PATH=/usr -DCMAKE_INSTALL_PREFIX=/usr -S s2n-tls -B s2n-tls/build
 RUN cmake3 --build s2n-tls/build --target install
 
@@ -26,7 +32,7 @@ RUN git clone -b v0.6.11 https://github.com/awslabs/aws-c-common.git
 RUN cmake3 -DCMAKE_PREFIX_PATH=/usr -DCMAKE_INSTALL_PREFIX=/usr -GNinja -S aws-c-common -B aws-c-common/build
 RUN cmake3 --build aws-c-common/build --target install
 
-RUN git clone -b v0.5.14 https://github.com/awslabs/aws-c-cal.git
+RUN git clone -b v0.5.12 https://github.com/awslabs/aws-c-cal.git
 RUN cmake3 -DCMAKE_PREFIX_PATH=/usr -DCMAKE_INSTALL_PREFIX=/usr -GNinja -S aws-c-cal -B aws-c-cal/build
 RUN cmake3 --build aws-c-cal/build --target install
 
@@ -57,41 +63,20 @@ RUN mv aws-nitro-enclaves-nsm-api/target/release/nsm.h /usr/include
 
 
 RUN yum install -y doxygen
-COPY . aws-nitro-enclaves-sdk-c
 RUN cmake3 -DCMAKE_PREFIX_PATH=/usr -DCMAKE_INSTALL_PREFIX=/usr -GNinja \
 	-S aws-nitro-enclaves-sdk-c -B aws-nitro-enclaves-sdk-c/build
 RUN cmake3 --build aws-nitro-enclaves-sdk-c/build --target install
 RUN cmake3 --build aws-nitro-enclaves-sdk-c/build --target docs
 
-# Test
-FROM builder as test
-RUN cmake3 --build aws-nitro-enclaves-sdk-c/build --target test
+# Create a workshop base image with libnsm.so and kmstool_enclave_cli
+FROM public.ecr.aws/amazonlinux/amazonlinux:2 as enclave_base
+WORKDIR /app
+COPY --from=builder /usr/lib64/libnsm.so /usr/lib64/libnsm.so /app/
+COPY --from=builder /usr/bin/kmstool_enclave_cli /app/
 
-# kmstool-enclave
-FROM amazonlinux as kmstool-enclave
-
-# TODO: building packages statically instead of cleaning up unwanted packages from amazonlinux
-RUN rpm -e python python-libs python-urlgrabber python2-rpm pygpgme pyliblzma python-iniparse pyxattr python-pycurl amazon-linux-extras yum yum-metadata-parser yum-plugin-ovl yum-plugin-priorities
-COPY --from=builder /usr/lib64/libnsm.so /usr/lib64/libnsm.so
-COPY --from=builder /usr/bin/kmstool_enclave /kmstool_enclave
-CMD ["/kmstool_enclave"]
-
-# kmstool-instance
-FROM amazonlinux as kmstool-instance
-
-# TODO: building packages statically instead of cleaning up unwanted packages from amazonlinux
-RUN rpm -e python python-libs python-urlgrabber python2-rpm pygpgme pyliblzma python-iniparse pyxattr python-pycurl amazon-linux-extras yum yum-metadata-parser yum-plugin-ovl yum-plugin-priorities
-COPY --from=builder /usr/lib64/libnsm.so /usr/lib64/libnsm.so
-COPY --from=builder /usr/bin/kmstool_instance /kmstool_instance
-CMD ["/kmstool_instance"]
-
-# kmstool-enclave-cli
-FROM amazonlinux as kmstool-enclave-cli
-
-# TODO: building packages statically instead of cleaning up unwanted packages from amazonlinux
-RUN rpm -e python python-libs python-urlgrabber python2-rpm pygpgme pyliblzma python-iniparse pyxattr python-pycurl amazon-linux-extras yum yum-metadata-parser yum-plugin-ovl yum-plugin-priorities
-COPY --from=builder /usr/lib64/libnsm.so /usr/lib64/libnsm.so
-COPY --from=builder /usr/bin/kmstool_enclave_cli /kmstool_enclave_cli
+RUN yum install python3 iproute   -y
+ENV AWS_STS_REGIONAL_ENDPOINTS=regional
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/app
 
 WORKDIR /app
 
