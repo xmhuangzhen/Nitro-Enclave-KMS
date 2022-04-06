@@ -44,6 +44,8 @@ def decrypt_cipher(access, secret, token, ciphertext, region):
 
     ret = proc.communicate()
 
+    print(ret)
+
     if ret[0]:
         b64text = proc.communicate()[0].decode()
         plaintext = base64.b64decode(b64text).decode()
